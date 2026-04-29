@@ -19,13 +19,14 @@ x-isolate-runtime: &isolate-runtime
     - SYS_ADMIN
   security_opt:
     - seccomp:unconfined
-  cgroupns: host
+  cgroup: host
   volumes:
     - /sys/fs/cgroup:/sys/fs/cgroup:rw
 
 services:
   server:
-    image: judge0/judge0:latest
+    image: bitblazer/judge0-cgv2:latest
+    command: ["./scripts/server"]
     volumes:
       - ./judge0.conf:/judge0.conf:ro
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
@@ -35,12 +36,12 @@ services:
       - SYS_ADMIN
     security_opt:
       - seccomp:unconfined
-    cgroupns: host
+    cgroup: host
     <<: *default-logging
     restart: always
 
   worker:
-    image: judge0/judge0:latest
+    image: bitblazer/judge0-cgv2:latest
     command: ["./scripts/workers"]
     volumes:
       - ./judge0.conf:/judge0.conf:ro
@@ -49,7 +50,7 @@ services:
       - SYS_ADMIN
     security_opt:
       - seccomp:unconfined
-    cgroupns: host
+    cgroup: host
     <<: *default-logging
     restart: always
 

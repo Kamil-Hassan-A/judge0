@@ -15,12 +15,17 @@ This changeset makes Judge0 work on **cgroup v2** environments (WSL 2, Ubuntu 22
 **Why:** The `judge0/compilers:1.4.0` base image ships isolate built from the `judge0/isolate` fork at commit `ad39cc4d` — a cgroup v1-era fork that does not support the `--cg` flag on unified cgroup v2 hierarchies. We add a new `RUN` layer that:
 
 1. Installs `libcap-dev`, `libseccomp-dev`, `pkg-config` (build dependencies for isolate v2).
-2. Clones `https://github.com/ioi/isolate` at tag **`v2.4`** (latest stable as of 2026-04).
+2. Clones `https://github.com/ioi/isolate` at tag **`v2.1`** (v2.4 depends on `SYS_quotactl_fd`, missing from the Debian Buster kernel headers in the base image).
 3. Builds only the `isolate` and `isolate-check-environment` targets (skipping `isolate-cg-keeper` which requires systemd and is unused by Judge0).
-4. Installs the new binary over the old one (same path: `/usr/local/bin/isolate`).
-5. Runs `isolate --version` as a build-time smoke-test to confirm the binary works.
+4. Installs `default.cf` and overrides `cg_root` to `/sys/fs/cgroup/isolate` (Docker does not run systemd or `isolate-cg-keeper`).
+5. Installs the new binary over the old one (same path: `/usr/local/bin/isolate`).
+6. Runs `isolate --version` as a build-time smoke-test to confirm the binary works.
 
 isolate v2.x introduces full cgroup v2 support: it detects the unified hierarchy automatically and uses the correct cgroup paths when `--cg` is passed.
+
+**Debian Buster archive fix:** The Dockerfile rewrites `sources.list` to the Debian archive mirror before any `apt-get update`, since Buster is EOL and the standard mirrors return 404s.
+
+**CRLF safeguards:** The Dockerfile now runs `dos2unix` on all shell scripts and `docker-entrypoint.sh` when building from a Windows host, preventing `\r`-related bash errors.
 
 ---
 
@@ -28,11 +33,13 @@ isolate v2.x introduces full cgroup v2 support: it detects the unified hierarchy
 
 **Why:** On a cgroup v2 host, newly-created cgroup directories do not automatically inherit resource controllers — they must be explicitly delegated by writing to `cgroup.subtree_control`. Docker does not do this automatically. The entrypoint now:
 
-1. Detects cgroup v2 at runtime by checking for `/sys/fs/cgroup/cgroup.controllers`.
-2. Writes `+cpu +memory +pids` to the root `cgroup.subtree_control`.
-3. Creates `/sys/fs/cgroup/isolate` and delegates the same controllers into it.
-4. Falls back silently to cgroup v1 behaviour if the detection file is absent.
-5. Then starts `cron` and `exec "$@"` as before.
+1. Fixes Windows CRLF in `/judge0.conf` (the file is sourced by bash).
+2. Detects cgroup v2 at runtime by checking for `/sys/fs/cgroup/cgroup.controllers`.
+3. Writes `+cpu +memory +pids` to the root `cgroup.subtree_control`.
+4. Creates `/sys/fs/cgroup/isolate` and delegates the same controllers into it.
+5. Ensures `/run/isolate/locks` exists with mode `1777` (tmpfs each boot).
+6. Falls back silently to cgroup v1 behaviour if the detection file is absent.
+7. Then starts `cron` and `exec "$@"` as before.
 
 This runs as `root` (before `USER judge0` takes effect at runtime) so it has the necessary write access to the cgroup filesystem.
 
@@ -52,10 +59,12 @@ This runs as `root` (before `USER judge0` takes effect at runtime) so it has the
 |---|---|---|
 | `cap_add: [SYS_ADMIN]` | Added | isolate uses `clone()`, `unshare()`, and cgroup operations that require `SYS_ADMIN` |
 | `security_opt: [seccomp:unconfined]` | Added | isolate's default seccomp profile blocks the specific `clone()` flags isolate uses |
-| `cgroupns: host` | Added | Makes `/sys/fs/cgroup` inside the container refer to the real host hierarchy; required for isolate to walk the cgroup tree correctly |
+| `cgroup: host` | Added | Makes `/sys/fs/cgroup` inside the container refer to the real host hierarchy; required for isolate to walk the cgroup tree correctly |
 | `/sys/fs/cgroup:/sys/fs/cgroup:rw` | Changed from `privileged: true` implicit | Allows isolate to create sub-cgroups at runtime |
 
 `privileged: true` is removed and replaced with these targeted capabilities — this is more secure than a blanket privileged container while still granting what isolate needs.
+
+**Image update:** `server` and `worker` now use `bitblazer/judge0-cgv2:latest`, and the `server` command is explicitly set to `./scripts/server` for clarity.
 
 ---
 
@@ -81,6 +90,12 @@ Two guards are now added in `initialize_workdir`:
 2. **Boxdir existence check:** even if isolate exits 0 (possible with partial cgroup delegation), if the sandbox directory wasn't actually created, raises a `RuntimeError` with guidance to check `CGROUP_V2_CHANGES.md`.
 
 These errors flow through the existing `rescue Exception => e` at the top of `perform`, which sets `submission.status = Status.boxerr` and persists the error message — so the API response will contain the diagnostic message directly.
+
+---
+
+### `.gitattributes`
+
+**Why:** Forces LF line endings for shell scripts and config files on all platforms to prevent CRLF from breaking bash scripts in Linux containers. This pairs with the Dockerfile `dos2unix` step for extra safety when building on Windows.
 
 ---
 
