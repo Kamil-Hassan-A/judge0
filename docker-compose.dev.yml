@@ -16,7 +16,7 @@ services:
       - SYS_ADMIN
     security_opt:
       - seccomp:unconfined
-    cgroupns: host
+    cgroup: host
 
   db:
     image: postgres:16.2

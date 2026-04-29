@@ -1,0 +1,7 @@
+# Ensure shell scripts and conf files always use LF in the repo
+# regardless of the developer's OS. Without this, Windows git clients
+# convert to CRLF on checkout, breaking bash sourcing inside containers.
+*.sh        text eol=lf
+*.conf      text eol=lf
+Dockerfile  text eol=lf
+scripts/*   text eol=lf
